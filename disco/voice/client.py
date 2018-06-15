@@ -13,14 +13,10 @@ from disco.util.websocket import Websocket
 from disco.util.logging import LoggingClass
 from disco.gateway.packets import OPCode
 from disco.voice.packets import VoiceOPCode
-from disco.voice.udp import UDPVoiceClient
-
-AudioCodecs = ('opus',)
-
-PayloadTypes = Enum(OPUS=0x78)
+from disco.voice.udp import AudioCodecs, PayloadTypes, UDPVoiceClient
 
 SpeakingCodes = Enum(
-    NONE=0
+    NONE=0,
     VOICE=1 << 0,
     SOUNDSHARE=1 << 1
 )
@@ -199,12 +195,14 @@ class VoiceClient(LoggingClass):
 
         for i in range(len(AudioCodecs)):
             codec = AudioCodecs[i]
-            codecs.append({
-                'name': codec,
-                'type': 'audio',
-                'priority': i * 1000,
-                'payload_type': PayloadTypes.get(codec.upper())
-            })
+            payload_type = PayloadTypes.get(codec)
+            if payload_type:
+                codecs.append({
+                    'name': codec,
+                    'type': 'audio',
+                    'priority': (i + 1) * 1000,
+                    'payload_type': payload_type.value
+                })
 
         self.log.debug('[%s] IP discovery completed (ip = %s, port = %s), sending SELECT_PROTOCOL', self, ip, port)
         self.send(VoiceOPCode.SELECT_PROTOCOL, {
@@ -258,10 +256,11 @@ class VoiceClient(LoggingClass):
     def on_voice_speaking(self, data):
         self.audio_ssrcs[data['ssrc']] = data['user_id']
 
-        payload = VoiceSpeaking()
-        payload.user_id = data['user_id']
-        payload.speaking = (data['speaking'] & SpeakingCodes.VOICE) == SpeakingCodes.VOICE
-        payload.soundshare = (data['speaking'] & SpeakingCodes.SOUNDSHARE) == SpeakingCodes.SOUNDSHARE
+        payload = VoiceSpeaking(
+            user_id=data['user_id'],
+            speaking=(data['speaking'] & SpeakingCodes.VOICE.value),
+            soundshare=(data['speaking'] & SpeakingCodes.SOUNDSHARE.value)
+        )
 
         self.client.gw.events.emit('VoiceSpeaking', payload)
 

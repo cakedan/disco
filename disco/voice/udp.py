@@ -12,7 +12,10 @@ except ImportError:
 from holster.enum import Enum
 
 from disco.util.logging import LoggingClass
-from disco.voice.client import PayloadTypes
+
+AudioCodecs = ('opus',)
+
+PayloadTypes = Enum(OPUS=0x78)
 
 MAX_UINT32 = 4294967295
 MAX_SEQUENCE = 65535
@@ -43,7 +46,7 @@ class RTPHeader(namedtuple('RTPHeader', ['version', 'padding', 'extension', 'csr
         RTP packet's SSRC, the person talking
     """
 
-class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'rtp'])):
+class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'rtp', 'codec', 'channel'])):
     """
     Voice Data received from the UDP socket
     Attributes
@@ -54,6 +57,8 @@ class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'rtp'])):
         the id of the user who sent this data
     rtp : RTPHeader
         the rtp packet's header data
+    codec : string
+        the codec this packet is using
     """
 
 class UDPVoiceClient(LoggingClass):
@@ -80,7 +85,7 @@ class UDPVoiceClient(LoggingClass):
         # Buffer used for encoding/sending frames
         self._buffer = bytearray(24)
         self._buffer[0] = 2 << 6 # Only RTP Version set in the first byte of the header, 0x80
-        self._buffer[1] = PayloadTypes.OPUS
+        self._buffer[1] = PayloadTypes.OPUS.value
 
     def increment_timestamp(self, by):
         self.timestamp += by
@@ -134,18 +139,19 @@ class UDPVoiceClient(LoggingClass):
             if len(data) <= 12:
                 continue
             
-            rtp = RTPHeader()
-            rtp.version = data[1] >> 6
-            rtp.padding = (data[1] >> 5) & 1
-            rtp.extension = (data[1] >> 4) & 1
-            rtp.csrc_count = data[1] & 0x0F
-            
-            rtp.marker = data[2] >> 7
-            rtp.payload_type = data[2] & 0x7F
+            first, second, sequence, timestamp, ssrc = struct.unpack_from('>BBHII', data)
 
-            rtp.sequence = struct.unpack('>H', data[2:])
-            rtp.timestamp = struct.unpack('>I', data[4:])
-            rtp.ssrc = struct.unpack('>I', data[8:])
+            rtp = RTPHeader(
+                version=first >> 6,
+                padding=(first >> 5) & 1,
+                extension=(first >> 4) & 1,
+                csrc_count=first & 0x0F,
+                marker=second >> 7,
+                payload_type=second & 0x7F,
+                sequence=sequence,
+                timestamp=timestamp,
+                ssrc=ssrc
+            )
 
             # Check if rtp version is 2
             if rtp.version != 2:
@@ -159,15 +165,18 @@ class UDPVoiceClient(LoggingClass):
 
             nonce = bytearray(24)
             if self.vc.mode == 'xsalsa20_poly1305_lite':
-                struct.pack_into('>I', nonce, 0, data[-4:])
-                data = data[-4:]
+                nonce[:4] = data[-4:]
+                data = data[:-4]
             elif self.vc.mode == 'xsalsa20_poly1305_suffx':
-                struct.pack_into('>I', nonce, 0, data[-24:])
-                data = data[-24:]
+                nonce[:24] = data[-24:]
+                data = data[:-24]
             else:
-                struct.pack_into('>I', nonce, 0, data[:12])
-            
-            data = self._secret_box.decrypt(bytes(data[12:]), bytes(nonce))
+                nonce[:12] = data[:12]
+
+            try:
+                data = self._secret_box.decrypt(bytes(data[12:]), bytes(nonce))
+            except:
+                continue
 
             # RFC3550 Section 5.1 (Padding)
             if rtp.padding:
@@ -176,14 +185,17 @@ class UDPVoiceClient(LoggingClass):
             
             if rtp.extension:
                 # RFC5285 Section 4.2: One-Byte Header
-                if all(data[i] == RTP_HEADER_ONE_BYTE[i] for i in range(len(RTP_HEADER_ONE_BYTE))):
-                    fields_amount = struct.unpack_from('>H', data)
+                rtp_extension_header = struct.unpack_from('>BB', data[:2])
+                if rtp_extension_header == RTP_HEADER_ONE_BYTE:
+                    data = data[2:]
+
+                    fields_amount, = struct.unpack_from('>H', data[:2])
                     fields = []
 
                     offset = 4
                     for i in range(fields_amount):
+                        first_byte, = struct.unpack_from('>B', data[offset])
                         offset += 1
-                        first_byte = data[offset]
                         
                         rtp_extension_identifer = first_byte & 0xF
                         rtp_extension_len = ((first_byte >> 4) & 0xF) + 1
@@ -209,9 +221,9 @@ class UDPVoiceClient(LoggingClass):
                 continue
             
             user_id = self.vc.audio_ssrcs.get(rtp.ssrc, None)
-            payload = VoiceData(data=data, user_id=user_id, rtp=rtp)
+            payload = VoiceData(data=data, user_id=user_id, rtp=rtp, codec=payload_type.name, channel=self.vc.channel)
 
-            self.vc.client.gw.events.emit('VoiceReceived', payload)
+            self.vc.client.gw.events.emit('VoiceData', payload)
 
     def send(self, data):
         self.conn.sendto(data, (self.ip, self.port))
