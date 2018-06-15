@@ -18,7 +18,7 @@ from disco.voice.udp import AudioCodecs, PayloadTypes, UDPVoiceClient
 SpeakingCodes = Enum(
     NONE=0,
     VOICE=1 << 0,
-    SOUNDSHARE=1 << 1
+    SOUNDSHARE=1 << 1,
 )
 
 VoiceState = Enum(
@@ -139,7 +139,7 @@ class VoiceClient(LoggingClass):
         self.send(VoiceOPCode.SPEAKING, {
             'speaking': int(value),
             'delay': delay,
-            'ssrc': self.ssrc
+            'ssrc': self.ssrc,
         })
 
     def send(self, op, data):
@@ -214,12 +214,12 @@ class VoiceClient(LoggingClass):
                 'address': ip,
                 'mode': self.mode,
             },
-            'codecs': codecs
+            'codecs': codecs,
         })
         self.send(VoiceOPCode.CLIENT_CONNECT, {
             'audio_ssrc': self.ssrc,
             'video_ssrc': 0,
-            'rtx_ssrc': 0
+            'rtx_ssrc': 0,
         })
 
     def on_voice_resumed(self, data):
@@ -261,7 +261,7 @@ class VoiceClient(LoggingClass):
         payload = VoiceSpeaking(
             user_id=data['user_id'],
             speaking=(data['speaking'] & SpeakingCodes.VOICE.value),
-            soundshare=(data['speaking'] & SpeakingCodes.SOUNDSHARE.value)
+            soundshare=(data['speaking'] & SpeakingCodes.SOUNDSHARE.value),
         )
 
         self.client.gw.events.emit('VoiceSpeaking', payload)

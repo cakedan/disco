@@ -23,46 +23,25 @@ MAX_SEQUENCE = 65535
 RTP_HEADER_ONE_BYTE = (0xBE, 0xDE)
 
 
-class RTPHeader(namedtuple('RTPHeader', ['version', 'padding', 'extension', 'csrc_count', 'marker', 'payload_type', 'sequence', 'timestamp', 'ssrc'])):
-    """
-    RTP Packet's Header information
-    Attributes
-    ---------
-    version : integer
-        the RTP version the packet's using
-    padding : integer
-        is this RTP packet using padding
-    extension : integer
-        is this RTP packet using extension
-    csrc_count : integer
-    marker : integer
-        is this RTP packet having a marker
-    payload_type : integer
-        RTP packet's payload type, currently should only be OPUS data
-    sequence : integer
-        RTP packet's sequence
-    timestamp : integer
-        RTP packet's timestamp
-    ssrc : integer
-        RTP packet's SSRC, the person talking
-    """
+RTPHeader = namedtuple('RTPHeader', [
+    'version',
+    'padding',
+    'extension',
+    'csrc_count',
+    'marker',
+    'payload_type',
+    'sequence',
+    'timestamp',
+    'ssrc',
+])
 
-
-class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'payload_type', 'channel', 'rtp'])):
-    """
-    Voice Data received from the UDP socket
-    Attributes
-    ---------
-    data : bytes
-        the decrypted data
-    user_id: snowflake
-        the id of the user who sent this data
-    payload_type : string
-        the payload's type, currently only 'opus' supported
-    channel : object??
-    rtp : RTPHeader
-        the rtp packet's header data
-    """
+VoiceData = namedtuple('VoiceData', [
+    'data',
+    'user_id',
+    'payload_type',
+    'channel',
+    'rtp',
+])
 
 
 class UDPVoiceClient(LoggingClass):
@@ -154,7 +133,7 @@ class UDPVoiceClient(LoggingClass):
                 payload_type=second & 0x7F,
                 sequence=sequence,
                 timestamp=timestamp,
-                ssrc=ssrc
+                ssrc=ssrc,
             )
 
             # Check if rtp version is 2
@@ -231,7 +210,7 @@ class UDPVoiceClient(LoggingClass):
                 payload_type=payload_type.name,
                 user_id=user_id,
                 channel=self.vc.channel,
-                rtp=rtp
+                rtp=rtp,
             )
 
             self.vc.client.gw.events.emit('VoiceData', payload)
