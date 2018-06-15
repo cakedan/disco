@@ -22,6 +22,7 @@ MAX_SEQUENCE = 65535
 
 RTP_HEADER_ONE_BYTE = (0xBE, 0xDE)
 
+
 class RTPHeader(namedtuple('RTPHeader', ['version', 'padding', 'extension', 'csrc_count', 'marker', 'payload_type', 'sequence', 'timestamp', 'ssrc'])):
     """
     RTP Packet's Header information
@@ -46,7 +47,8 @@ class RTPHeader(namedtuple('RTPHeader', ['version', 'padding', 'extension', 'csr
         RTP packet's SSRC, the person talking
     """
 
-class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'rtp', 'codec', 'channel'])):
+
+class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'payload_type', 'channel', 'rtp'])):
     """
     Voice Data received from the UDP socket
     Attributes
@@ -55,11 +57,13 @@ class VoiceData(namedtuple('VoiceData', ['data', 'user_id', 'rtp', 'codec', 'cha
         the decrypted data
     user_id: snowflake
         the id of the user who sent this data
+    payload_type : string
+        the payload's type, currently only 'opus' supported
+    channel : object??
     rtp : RTPHeader
         the rtp packet's header data
-    codec : string
-        the codec this packet is using
     """
+
 
 class UDPVoiceClient(LoggingClass):
     def __init__(self, vc):
@@ -84,7 +88,7 @@ class UDPVoiceClient(LoggingClass):
 
         # Buffer used for encoding/sending frames
         self._buffer = bytearray(24)
-        self._buffer[0] = 2 << 6 # Only RTP Version set in the first byte of the header, 0x80
+        self._buffer[0] = 2 << 6  # Only RTP Version set in the first byte of the header, 0x80
         self._buffer[1] = PayloadTypes.OPUS.value
 
     def increment_timestamp(self, by):
@@ -138,7 +142,7 @@ class UDPVoiceClient(LoggingClass):
             # Data cannot be less than the bare minimum, just ignore
             if len(data) <= 12:
                 continue
-            
+
             first, second, sequence, timestamp, ssrc = struct.unpack_from('>BBHII', data)
 
             rtp = RTPHeader(
@@ -156,7 +160,7 @@ class UDPVoiceClient(LoggingClass):
             # Check if rtp version is 2
             if rtp.version != 2:
                 continue
-            
+
             payload_type = PayloadTypes.get(rtp.payload_type)
 
             # Unsupported payload type received
@@ -175,17 +179,17 @@ class UDPVoiceClient(LoggingClass):
 
             try:
                 data = self._secret_box.decrypt(bytes(data[12:]), bytes(nonce))
-            except:
+            except Exception:
                 continue
 
             # RFC3550 Section 5.1 (Padding)
             if rtp.padding:
                 padding_amount = data[:-1]
                 data = data[-padding_amount:]
-            
+
             if rtp.extension:
                 # RFC5285 Section 4.2: One-Byte Header
-                rtp_extension_header = struct.unpack_from('>BB', data[:2])
+                rtp_extension_header = struct.unpack_from('>BB', data)
                 if rtp_extension_header == RTP_HEADER_ONE_BYTE:
                     data = data[2:]
 
@@ -196,32 +200,39 @@ class UDPVoiceClient(LoggingClass):
                     for i in range(fields_amount):
                         first_byte, = struct.unpack_from('>B', data[offset])
                         offset += 1
-                        
+
                         rtp_extension_identifer = first_byte & 0xF
                         rtp_extension_len = ((first_byte >> 4) & 0xF) + 1
 
                         # Ignore data if identifer == 15, so skip if this is set as 0
                         if rtp_extension_identifer:
                             fields.append(data[offset:offset + rtp_extension_len])
-                        
+
                         offset += rtp_extension_len
 
                         # skip padding
                         while data[offset] == 0:
                             offset += 1
-                    
+
                     if len(fields):
-                        data = b''.join(fields + [data[offset:]])
+                        fields.append(data[offset:])
+                        data = b''.join(fields)
                     else:
                         data = data[offset:]
-            
+
             # RFC3550 Section 5.3: Profile-Specific Modifications to the RTP Header
-			# clients send it sometimes, definitely on fresh connects to a server, dunno what to do here
+            # clients send it sometimes, definitely on fresh connects to a server, dunno what to do here
             if rtp.marker:
                 continue
-            
+
             user_id = self.vc.audio_ssrcs.get(rtp.ssrc, None)
-            payload = VoiceData(data=data, user_id=user_id, rtp=rtp, codec=payload_type.name, channel=self.vc.channel)
+            payload = VoiceData(
+                data=data,
+                payload_type=payload_type.name,
+                user_id=user_id,
+                channel=self.vc.channel,
+                rtp=rtp
+            )
 
             self.vc.client.gw.events.emit('VoiceData', payload)
 

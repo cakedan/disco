@@ -33,6 +33,7 @@ VoiceState = Enum(
     VOICE_CONNECTED=8,
 )
 
+
 class VoiceSpeaking(namedtuple('VoiceSpeaking', ['user_id', 'speaking', 'soundshare'])):
     """
     Voice Speaking Event
@@ -45,6 +46,7 @@ class VoiceSpeaking(namedtuple('VoiceSpeaking', ['user_id', 'speaking', 'soundsh
     soundshare : bool
         if they are using soundshare
     """
+
 
 class VoiceException(Exception):
     def __init__(self, msg, client):
@@ -108,7 +110,7 @@ class VoiceClient(LoggingClass):
         self._heartbeat_task = None
 
         # SSRCs
-        
+
         self.audio_ssrcs = {}
 
     def __repr__(self):
@@ -146,7 +148,7 @@ class VoiceClient(LoggingClass):
             'op': op.value,
             'd': data,
         }), self.encoder.OPCODE)
-    
+
     def on_voice_client_connect(self, data):
         self.audio_ssrcs[data['audio_ssrc']] = data['user_id']
         # ignore data['voice_ssrc'] for now
@@ -164,7 +166,7 @@ class VoiceClient(LoggingClass):
 
     def on_voice_hello(self, data):
         self.log.info('[%s] Recieved Voice HELLO payload, starting heartbeater', self)
-        self._heartbeat_task = gevent.spawn(self._heartbeat, data['heartbeat_interval'] * 0.75)
+        self._heartbeat_task = gevent.spawn(self._heartbeat, data['heartbeat_interval'])
         self.set_state(VoiceState.AUTHENTICATED)
 
     def on_voice_ready(self, data):
@@ -190,7 +192,7 @@ class VoiceClient(LoggingClass):
             self.log.error('Failed to discover our IP, perhaps a NAT or firewall is fucking us')
             self.disconnect()
             return
-        
+
         codecs = []
 
         for i in range(len(AudioCodecs)):
@@ -214,6 +216,11 @@ class VoiceClient(LoggingClass):
             },
             'codecs': codecs
         })
+        self.send(VoiceOPCode.CLIENT_CONNECT, {
+            'audio_ssrc': self.ssrc,
+            'video_ssrc': 0,
+            'rtx_ssrc': 0
+        })
 
     def on_voice_resumed(self, data):
         self.log.info('[%s] Recieved resumed', self)
@@ -229,11 +236,6 @@ class VoiceClient(LoggingClass):
 
         # Create a secret box for encryption/decryption
         self.udp.setup_encryption(bytes(bytearray(sdp['secret_key'])))
-
-        # Toggle speaking state so clients learn of our SSRC
-        self.set_speaking(True)
-        self.set_speaking(False)
-        gevent.sleep(0.25)
 
         self.set_state(VoiceState.CONNECTED)
 
