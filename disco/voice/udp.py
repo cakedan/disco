@@ -36,11 +36,11 @@ RTPHeader = namedtuple('RTPHeader', [
 ])
 
 VoiceData = namedtuple('VoiceData', [
-    'data',
+    'client',
     'user_id',
     'payload_type',
-    'channel',
     'rtp',
+    'data',
 ])
 
 
@@ -66,9 +66,9 @@ class UDPVoiceClient(LoggingClass):
         self._secret_box = None
 
         # Buffer used for encoding/sending frames
-        self._buffer = bytearray(24)
-        self._buffer[0] = 2 << 6  # Only RTP Version set in the first byte of the header, 0x80
-        self._buffer[1] = PayloadTypes.OPUS.value
+        self._header = bytearray(12)
+        self._header[0] = 2 << 6  # Only RTP Version set in the first byte of the header, 0x80
+        self._header[1] = PayloadTypes.OPUS.value
 
     def increment_timestamp(self, by):
         self.timestamp += by
@@ -83,27 +83,40 @@ class UDPVoiceClient(LoggingClass):
         frame = bytearray(frame)
 
         # Pack the rtc header into our buffer
-        struct.pack_into('>H', self._buffer, 2, sequence or self.sequence)
-        struct.pack_into('>I', self._buffer, 4, timestamp or self.timestamp)
-        struct.pack_into('>i', self._buffer, 8, self.vc.ssrc)
+        struct.pack_into('>H', self._header, 2, sequence or self.sequence)
+        struct.pack_into('>I', self._header, 4, timestamp or self.timestamp)
+        struct.pack_into('>i', self._header, 8, self.vc.ssrc)
 
         if self.vc.mode == 'xsalsa20_poly1305_lite':
+            # Use an incrementing number as a nonce, only first 4 bytes of the nonce is padded on
             self._nonce += 1
             if self._nonce > MAX_UINT32:
                 self._nonce = 0
 
             nonce = bytearray(24)
             struct.pack_into('>I', nonce, 0, self._nonce)
-            raw = self._secret_box.encrypt(bytes(frame), nonce).ciphertext + nonce[:4]
+            nonce_padding = nonce[:4]
         elif self.vc.mode == 'xsalsa20_poly1305_suffix':
+            # Generate a nonce
             nonce = nacl.utils.random(nacl.secret.SecretBox.NONCE_SIZE)
-            raw = self._secret_box.encrypt(bytes(frame), nonce).ciphertext + nonce
+            nonce_padding = nonce
+        elif self.vc.mode == 'xsalsa20_poly1305':
+            # Nonce is the header
+            nonce = bytearray(24)
+            nonce[:12] = self._header
+            nonce_padding = None
         else:
-            # Now encrypt the payload with the nonce as a header
-            raw = self._secret_box.encrypt(bytes(frame), bytes(self._buffer)).ciphertext
+            raise Exception('The voice mode, {}, isn\'t supported.'.format(self.vc.mode))
+
+        # Encrypt the payload with the nonce
+        raw = self._secret_box.encrypt(bytes(frame), bytes(nonce)).ciphertext
+
+        # Pad the payload with the nonce, if applicable
+        if nonce_padding:
+            raw += nonce_padding
 
         # Send the header (sans nonce padding) plus the payload
-        self.send(self._buffer[:12] + raw)
+        self.send(self._header + raw)
 
         # Increment our sequence counter
         self.sequence += 1
@@ -153,8 +166,10 @@ class UDPVoiceClient(LoggingClass):
             elif self.vc.mode == 'xsalsa20_poly1305_suffx':
                 nonce[:24] = data[-24:]
                 data = data[:-24]
-            else:
+            elif self.vc.mode == 'xsalsa20_poly1305':
                 nonce[:12] = data[:12]
+            else:
+                continue
 
             try:
                 data = self._secret_box.decrypt(bytes(data[12:]), bytes(nonce))
@@ -163,7 +178,7 @@ class UDPVoiceClient(LoggingClass):
 
             # RFC3550 Section 5.1 (Padding)
             if rtp.padding:
-                padding_amount = data[:-1]
+                padding_amount, = struct.unpack_from('>B', data[:-1])
                 data = data[-padding_amount:]
 
             if rtp.extension:
@@ -172,7 +187,7 @@ class UDPVoiceClient(LoggingClass):
                 if rtp_extension_header == RTP_HEADER_ONE_BYTE:
                     data = data[2:]
 
-                    fields_amount, = struct.unpack_from('>H', data[:2])
+                    fields_amount, = struct.unpack_from('>H', data)
                     fields = []
 
                     offset = 4
@@ -204,13 +219,12 @@ class UDPVoiceClient(LoggingClass):
             if rtp.marker:
                 continue
 
-            user_id = self.vc.audio_ssrcs.get(rtp.ssrc, None)
             payload = VoiceData(
-                data=data,
+                client=self.vc,
                 payload_type=payload_type.name,
-                user_id=user_id,
-                channel=self.vc.channel,
+                user_id=self.vc.audio_ssrcs.get(rtp.ssrc, None),
                 rtp=rtp,
+                data=data,
             )
 
             self.vc.client.gw.events.emit('VoiceData', payload)

@@ -33,19 +33,12 @@ VoiceState = Enum(
     VOICE_CONNECTED=8,
 )
 
-
-class VoiceSpeaking(namedtuple('VoiceSpeaking', ['user_id', 'speaking', 'soundshare'])):
-    """
-    Voice Speaking Event
-    Attributes
-    ---------
-    user_id : snowflake
-        the id of the user
-    speaking : bool
-        if they are speaking
-    soundshare : bool
-        if they are using soundshare
-    """
+VoiceSpeaking = namedtuple('VoiceSpeaking', [
+    'client',
+    'user_id',
+    'speaking',
+    'soundshare',
+])
 
 
 class VoiceException(Exception):
@@ -259,9 +252,10 @@ class VoiceClient(LoggingClass):
         self.audio_ssrcs[data['ssrc']] = data['user_id']
 
         payload = VoiceSpeaking(
+            client=self,
             user_id=data['user_id'],
-            speaking=(data['speaking'] & SpeakingCodes.VOICE.value),
-            soundshare=(data['speaking'] & SpeakingCodes.SOUNDSHARE.value),
+            speaking=bool(data['speaking'] & SpeakingCodes.VOICE.value),
+            soundshare=bool(data['speaking'] & SpeakingCodes.SOUNDSHARE.value),
         )
 
         self.client.gw.events.emit('VoiceSpeaking', payload)
