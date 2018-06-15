@@ -103,7 +103,6 @@ class VoiceClient(LoggingClass):
         self._heartbeat_task = None
 
         # SSRCs
-
         self.audio_ssrcs = {}
 
     def __repr__(self):
@@ -128,9 +127,15 @@ class VoiceClient(LoggingClass):
             self.send(VoiceOPCode.HEARTBEAT, time.time())
             gevent.sleep(interval / 1000)
 
-    def set_speaking(self, value, delay=0):
+    def set_speaking(self, voice=False, soundshare=False, delay=0):
+        value = SpeakingCodes.NONE.value
+        if voice:
+            value |= SpeakingCodes.VOICE.value
+        if soundshare:
+            value |= SpeakingCodes.SOUNDSHARE.value
+
         self.send(VoiceOPCode.SPEAKING, {
-            'speaking': int(value),
+            'speaking': value,
             'delay': delay,
             'ssrc': self.ssrc,
         })
@@ -156,6 +161,9 @@ class VoiceClient(LoggingClass):
         self.audio_codec = data['audio_codec']
         self.video_codec = data['video_codec']
         self.transport_id = data['media_session_id']
+
+        # Set the UDP's RTP Audio Header's Payload Type
+        self.udp.set_audio_codec(data['audio_codec'])
 
     def on_voice_hello(self, data):
         self.log.info('[%s] Recieved Voice HELLO payload, starting heartbeater', self)
@@ -188,16 +196,14 @@ class VoiceClient(LoggingClass):
 
         codecs = []
 
-        for i in range(len(AudioCodecs)):
-            codec = AudioCodecs[i]
-            payload_type = PayloadTypes.get(codec)
-            if payload_type:
-                codecs.append({
-                    'name': codec,
-                    'type': 'audio',
-                    'priority': (i + 1) * 1000,
-                    'payload_type': payload_type.value
-                })
+        # Sending discord our available codecs and rtp payload type for it
+        for idx, codec in enumerate(AudioCodecs):
+            codecs.append({
+                'name': codec,
+                'type': 'audio',
+                'priority': (idx + 1) * 1000,
+                'payload_type': PayloadTypes.get(codec).value,
+            })
 
         self.log.debug('[%s] IP discovery completed (ip = %s, port = %s), sending SELECT_PROTOCOL', self, ip, port)
         self.send(VoiceOPCode.SELECT_PROTOCOL, {
@@ -226,6 +232,9 @@ class VoiceClient(LoggingClass):
         self.audio_codec = sdp['audio_codec']
         self.video_codec = sdp['video_codec']
         self.transport_id = sdp['media_session_id']
+
+        # Set the UDP's RTP Audio Header's Payload Type
+        self.udp.set_audio_codec(sdp['audio_codec'])
 
         # Create a secret box for encryption/decryption
         self.udp.setup_encryption(bytes(bytearray(sdp['secret_key'])))
