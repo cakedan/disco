@@ -16,5 +16,5 @@ OPCode = Enum(
     INVALID_SESSION=9,
     HELLO=10,
     HEARTBEAT_ACK=11,
-    GUILD_SYNC=12,
+    GUILD_SYNC=12
 )
