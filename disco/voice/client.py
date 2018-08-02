@@ -121,7 +121,7 @@ class VoiceClient(LoggingClass):
     @cached_property
     def channel(self):
         return self.client.state.channels.get(self.channel_id)
-    
+
     @property
     def user_id(self):
         return self.client.state.me.id
@@ -381,7 +381,8 @@ class VoiceClient(LoggingClass):
             self._reconnects += 1
 
             if self.max_reconnects and self._reconnects > self.max_reconnects:
-                raise VoiceException('Failed to reconnect after {} attempts, giving up'.format(self.max_reconnects))
+                raise VoiceException(
+                    'Failed to reconnect after {} attempts, giving up'.format(self.max_reconnects), self)
 
             # Don't resume for these error codes:
             if 4000 <= code <= 4016:
